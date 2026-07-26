@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { pool } from "../db.js";
+import { asyncHandler } from "../asyncHandler.js";
 
 export const searchRouter = Router();
 
-searchRouter.get("/search", async (req, res) => {
+searchRouter.get("/search", asyncHandler(async (req, res) => {
   const q = String(req.query.q ?? "").trim();
   if (!q) {
     res.status(400).json({ error: "query param 'q' is required" });
@@ -27,4 +28,4 @@ searchRouter.get("/search", async (req, res) => {
     songs: songs.rows,
     artists: artists.rows,
   });
-});
+}));

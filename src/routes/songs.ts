@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { pool } from "../db.js";
+import { asyncHandler } from "../asyncHandler.js";
 
 export const songsRouter = Router();
 
-songsRouter.get("/song/:id", async (req, res) => {
+songsRouter.get("/song/:id", asyncHandler(async (req, res) => {
   const songId = Number(req.params.id);
   if (!Number.isInteger(songId)) {
     res.status(400).json({ error: "song id must be an integer" });
@@ -24,4 +25,4 @@ songsRouter.get("/song/:id", async (req, res) => {
   }
 
   res.status(200).json(rows[0]);
-});
+}));
