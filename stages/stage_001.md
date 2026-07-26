@@ -77,13 +77,25 @@ SELECT * FROM albums;
 SELECT s.id, s.title, a.title AS album_title
 FROM songs s JOIN albums a ON a.id = s.album_id;
 
--- confirm the case-insensitive indexes actually exist and get used
+-- check whether idx_songs_title_lower actually helps the app's search query
 \d songs
 EXPLAIN SELECT * FROM songs WHERE title ILIKE '%bleu%';
--- with only 3 rows seeded, Postgres will likely still choose a seq scan
--- (the planner ignores indexes below its cost threshold on tiny tables) —
--- that's expected at this data volume, not a bug. The index exists for when
--- the table has enough rows for the planner to prefer it.
+-- this is a Seq Scan, and it always will be, at any table size. A functional
+-- B-tree index on lower(title) can only accelerate an equality match
+-- (lower(title) = 'exact string') or a left-anchored prefix match
+-- (lower(title) LIKE 'bleu%', and even then only with a text_pattern_ops
+-- opclass this index doesn't have). It can never help a '%word%' containment
+-- search — there's no way to binary-search for "contains this substring
+-- anywhere." Compare:
+EXPLAIN SELECT * FROM songs WHERE lower(title) = 'bleu (better with time)';
+-- -> Bitmap Index Scan on idx_songs_title_lower (this is what the index is
+--    actually good for)
+--
+-- Net effect: idx_songs_title_lower is currently dead weight for this app's
+-- ILIKE-based search — it will never be chosen for /api/search, regardless
+-- of table size. Real substring search needs a trigram index (pg_trgm
+-- extension + GIN/GiST), which is a deliberate improvement to make later,
+-- not something to build reflexively now.
 
 -- confirm migration tracking works
 SELECT * FROM schema_migrations;
