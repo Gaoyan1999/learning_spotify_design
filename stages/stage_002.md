@@ -1,10 +1,10 @@
-# Stage 2.1 — Add a naive `listens` counter: migration only
+# Stage 2 — Naive popularity counter: how to observe it
 
-This is the first slice of Stage 2: just the schema change. `songs` gets a
-`listens` column, written to directly by future requests (no Redis buffer
-yet — that's Stage 3). No route changes in this slice; `/api/song/:id/play`
-and popularity-ordered search land in later 2.x steps. This doc is only
-about applying and observing `db/migrations/002_add_listens.sql`.
+Stage 2 proves the naive baseline the video frames as the thing to improve
+on: every play is a direct Postgres write (`UPDATE songs SET listens =
+listens + 1`), no buffering. This document covers both slices — the schema
+migration and the API/read-path wiring — plus a script that emulates real
+traffic against it.
 
 ## 1. Apply the migration
 
@@ -47,11 +47,66 @@ SELECT * FROM schema_migrations;
 
 Exit with `\q`.
 
-## 3. What's deliberately *not* here yet
+## 3. Play a song and watch search re-order
 
-No `POST /api/song/:id/play` route, no change to `/api/search` ordering —
-search still sorts alphabetically exactly as in Stage 1
-(`stages/stage_001.md`). `listens` sits on every row at `0`, unused by the
-API. That gap is intentional: the next 2.x step wires up the write path and
-the read-path ordering, so the "before" state here is worth confirming now
-while it's still trivially checkable.
+```bash
+npm run dev   # if not already running
+
+curl -s "http://localhost:3000/api/search?q=e" | jq
+# alphabetical-ish, since every song is still at listens=0 and it's now a
+# secondary sort key (ORDER BY listens DESC, title)
+
+curl -s -X POST "http://localhost:3000/api/song/3/play" | jq
+curl -s -X POST "http://localhost:3000/api/song/3/play" | jq
+curl -s -X POST "http://localhost:3000/api/song/3/play" | jq
+# each call returns {"id":3,"listens":N} — N increments by exactly 1 per call,
+# proving there's no batching/dedup at this layer: it's a direct write, one
+# request = one row update, every time
+
+curl -s "http://localhost:3000/api/search?q=e" | jq
+# song 3 now sorts first — search reads listens live off Postgres, no cache
+
+curl -i -X POST "http://localhost:3000/api/song/9999/play"
+# 404 — same not-found handling as GET /api/song/:id
+
+curl -i -X POST "http://localhost:3000/api/song/not-a-number/play"
+# 400 — same input validation as GET /api/song/:id
+```
+
+Confirm the write directly in `psql` too:
+
+```sql
+SELECT id, title, listens FROM songs ORDER BY listens DESC;
+```
+
+## 4. Emulate concurrent users
+
+`automation/simulate-plays.ts` spins up several fake "users" as concurrent
+async loops, each repeatedly picking a song (weighted so some songs get
+played more than others — see `songWeights` in the script) and calling
+`POST /api/song/:id/play`, with a random delay between plays.
+
+```bash
+npm run simulate
+# NUM_USERS=20 DURATION_MS=10000 npm run simulate   # tune concurrency/duration via env vars
+```
+
+It prints a per-song count of plays it *sent*; compare that against Postgres
+to confirm every request actually landed — with no buffering yet, "requests
+sent" and "listens incremented" should match exactly:
+
+```sql
+SELECT id, title, listens FROM songs ORDER BY listens DESC;
+```
+
+Watching this now is the point of comparison for Stage 3: once Redis sits in
+front of Postgres as a write buffer, this same script will hammer Redis
+instead, and `listens` in Postgres will stay flat until a flush — a very
+different picture from the 1-write-per-request behavior you're seeing here.
+
+## 5. What's deliberately *not* here yet
+
+No Redis, no cron, no queue — every `/play` call is a synchronous Postgres
+`UPDATE`, holding open a DB connection for the full round trip. At real
+Spotify-scale traffic this is the exact bottleneck the video's design is
+solving; Stage 3 introduces the write buffer that removes it.

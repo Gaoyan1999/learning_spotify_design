@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "migrate": "tsx src/migrate.ts",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "simulate": "tsx automation/simulate-plays.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
