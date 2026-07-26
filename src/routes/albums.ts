@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { pool } from "../db.js";
 import { asyncHandler } from "../asyncHandler.js";
+import { songRepository } from "../repositories/songRepository.js";
 
 export const albumsRouter = Router();
 
@@ -11,10 +11,6 @@ albumsRouter.get("/album/:id/songs", asyncHandler(async (req, res) => {
     return;
   }
 
-  const { rows } = await pool.query(
-    `SELECT id, title, object_ref FROM songs WHERE album_id = $1 ORDER BY id`,
-    [albumId],
-  );
-
-  res.status(200).json({ albumId, songs: rows });
+  const songs = await songRepository.listByAlbumId(albumId);
+  res.status(200).json({ albumId, songs });
 }));
