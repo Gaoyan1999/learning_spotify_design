@@ -15,7 +15,7 @@ Backend only, no frontend. The goal is to actually run each component and see ho
 ## Progress
 
 - [x] **Stage 1** — Postgres schema (`users`, `artists`, `albums`, `songs`) + read API (`/api/search`, `/api/album/:id/songs`, `/api/song/:id`)
-- [ ] **Stage 2** — naive popularity counter, written directly to Postgres
+- [x] **Stage 2** — naive popularity counter, written directly to Postgres (`POST /api/song/:id/play`, search ordered by `listens DESC`)
 - [ ] **Stage 3** — Redis as a write buffer for listens
 - [ ] **Stage 4** — cron flush → queue → worker pipeline reconciling Redis into Postgres
 - [ ] **Stage 5** — optional stretch (follow/unfollow, pagination, sharding simulation, mock CDN/streaming)
@@ -37,15 +37,20 @@ npm run dev                 # starts the API on http://localhost:3000
 curl "http://localhost:3000/api/search?q=fred"
 curl "http://localhost:3000/api/album/1/songs"
 curl "http://localhost:3000/api/song/1"
+curl -X POST "http://localhost:3000/api/song/1/play"
+
+npm run simulate   # emulate concurrent users generating plays, see automation/simulate-plays.ts
 ```
 
 ## Project layout
 
 ```
-db/migrations/   hand-written SQL migrations, applied in filename order
-src/db.ts        pg connection pool
-src/migrate.ts   tiny migration runner (tracks applied files in schema_migrations)
-src/seed.ts      sample data loader
-src/routes/      Express route handlers
-src/server.ts    app entrypoint
+db/migrations/                hand-written SQL migrations, applied in filename order
+src/db.ts                     pg connection pool
+src/migrate.ts                tiny migration runner (tracks applied files in schema_migrations)
+src/seed.ts                   sample data loader
+src/repositories/             DB access layer
+src/routes/                   Express route handlers
+src/server.ts                 app entrypoint
+automation/simulate-plays.ts  emulates concurrent users calling POST /api/song/:id/play
 ```

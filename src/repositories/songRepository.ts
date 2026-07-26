@@ -4,6 +4,7 @@ export interface SongSummary {
   id: number;
   title: string;
   album_id: number;
+  listens: number;
 }
 
 export interface SongDetail {
@@ -23,10 +24,21 @@ export interface AlbumSong {
 export const songRepository = {
   async searchByTitle(query: string, limit = 20): Promise<SongSummary[]> {
     const { rows } = await pool.query<SongSummary>(
-      `SELECT id, title, album_id FROM songs WHERE title ILIKE $1 ORDER BY title LIMIT $2`,
+      `SELECT id, title, album_id, listens FROM songs
+       WHERE title ILIKE $1
+       ORDER BY listens DESC, title
+       LIMIT $2`,
       [`%${query}%`, limit],
     );
     return rows;
+  },
+
+  async incrementListens(id: number): Promise<number | null> {
+    const { rows } = await pool.query<{ listens: number }>(
+      `UPDATE songs SET listens = listens + 1 WHERE id = $1 RETURNING listens`,
+      [id],
+    );
+    return rows[0]?.listens ?? null;
   },
 
   async findById(id: number): Promise<SongDetail | null> {
