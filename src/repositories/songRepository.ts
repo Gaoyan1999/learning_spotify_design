@@ -1,4 +1,7 @@
 import { pool } from "../db.js";
+import type { SongEntity } from "../entities/song.js";
+import { songSql } from "../sql.js";
+import { albumRepository } from "./albumRepository.js";
 
 export interface SongSummary {
   id: number;
@@ -21,34 +24,54 @@ export interface AlbumSong {
   object_ref: string;
 }
 
+const toSongSummary = (song: SongEntity): SongSummary => ({
+  id: song.id,
+  title: song.title,
+  album_id: song.album_id,
+  listens: song.listens,
+});
+
+const toAlbumSong = (song: SongEntity): AlbumSong => ({
+  id: song.id,
+  title: song.title,
+  object_ref: song.object_ref,
+});
+
+async function findEntityById(id: number): Promise<SongEntity | null> {
+  const { rows } = await pool.query<SongEntity>(songSql.findById, [id]);
+  return rows[0] ?? null;
+}
+
 export const songRepository = {
   async searchByTitle(query: string, limit = 20): Promise<SongSummary[]> {
-    const { rows } = await pool.query<SongSummary>(
-      `SELECT id, title, album_id, listens FROM songs
-       WHERE title ILIKE $1
-       ORDER BY listens DESC, title
-       LIMIT $2`,
-      [`%${query}%`, limit],
-    );
-    return rows;
+    const { rows } = await pool.query<SongEntity>(songSql.searchByTitle, [
+      `%${query}%`,
+      limit,
+    ]);
+    return rows.map(toSongSummary);
   },
 
   async findById(id: number): Promise<SongDetail | null> {
-    const { rows } = await pool.query<SongDetail>(
-      `SELECT s.id, s.title, s.object_ref, s.album_id, a.title AS album_title
-       FROM songs s
-       JOIN albums a ON a.id = s.album_id
-       WHERE s.id = $1`,
-      [id],
-    );
-    return rows[0] ?? null;
+    const song = await findEntityById(id);
+    if (!song) return null;
+
+    // FK on songs.album_id guarantees the album exists.
+    const album = await albumRepository.findById(song.album_id);
+    if (!album) return null;
+
+    return {
+      id: song.id,
+      title: song.title,
+      object_ref: song.object_ref,
+      album_id: song.album_id,
+      album_title: album.title,
+    };
   },
 
   async listByAlbumId(albumId: number): Promise<AlbumSong[]> {
-    const { rows } = await pool.query<AlbumSong>(
-      `SELECT id, title, object_ref FROM songs WHERE album_id = $1 ORDER BY id`,
-      [albumId],
-    );
-    return rows;
+    const { rows } = await pool.query<SongEntity>(songSql.listByAlbumId, [
+      albumId,
+    ]);
+    return rows.map(toAlbumSong);
   },
 };
