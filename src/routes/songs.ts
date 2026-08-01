@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../asyncHandler.js";
+import { listensBuffer } from "../repositories/listensBuffer.js";
 import { songRepository } from "../repositories/songRepository.js";
 
 export const songsRouter = Router();
@@ -27,11 +28,6 @@ songsRouter.post("/song/:id/play", asyncHandler(async (req, res) => {
     return;
   }
 
-  const listens = await songRepository.incrementListens(songId);
-  if (listens === null) {
-    res.status(404).json({ error: "song not found" });
-    return;
-  }
-
+  const listens = await listensBuffer.increment(songId);
   res.status(200).json({ id: songId, listens });
 }));
