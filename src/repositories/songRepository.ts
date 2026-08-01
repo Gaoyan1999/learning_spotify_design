@@ -74,4 +74,8 @@ export const songRepository = {
     ]);
     return rows.map(toAlbumSong);
   },
+
+  async applyListensDelta(id: number, delta: number): Promise<void> {
+    await pool.query(songSql.applyListensDelta, [id, delta]);
+  },
 };

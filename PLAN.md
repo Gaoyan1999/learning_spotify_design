@@ -48,17 +48,18 @@ Each stage is independently runnable via `docker compose up` + a documented `cur
 - Postgres `listens` field is now stale by design at this stage (not yet reconciled) — that's expected and sets up Stage 4
 - **Verify:** hit `/play`, confirm Redis counter increments (`redis-cli GET song:listens:<id>` or the debug endpoint) while Postgres stays flat.
 
-### Stage 4 — Cron aggregation, direct write (no queue yet)
-- Add a **scheduler process** (`src/scheduler.ts`, `node-cron`) running on a short interval for learning purposes (e.g. every 30s instead of the video's 12h) that:
-  1. Scans Redis for `song:listens:*` keys
-  2. For each key, directly applies `UPDATE songs SET listens = listens + $delta WHERE id = $songId`
-  3. Deletes/resets the flushed Redis keys
-- Runs as its own `docker-compose` service (or separate `npm run` process) from the API — this alone already decouples the hot `/play` write path from the Postgres write, which is the main thing Stage 3 left unfinished
-- No queue, no worker process yet — the cron does the scan *and* the write itself, on purpose, so the next stage's motivation (what breaks when one distinct song is flushed per key, at catalog scale) is felt firsthand before the fix is introduced
+### Stage 4 — Cron aggregation, direct write, multi-instance from the start (no queue yet)
+- Explicitly **not** a single standalone process — Spotify-scale means many servers, so the scheduler is run as **N instances** from day one of this stage (e.g. `docker compose up -d --scale scheduler=3`, or 3 separate `npm run scheduler` processes). Pretending it's a lone process would sidestep the exact problem real systems have to solve.
+- Every instance runs the same `node-cron` schedule (`src/scheduler.ts`) on a short interval for learning purposes (e.g. every 30s instead of the video's 12h). On each tick, an instance first tries to claim a short-lived **Redis lock** (`SET lock:flush-listens <instanceId> NX PX <ttlMs>`):
+  - Lock acquired → this instance scans `song:listens:*`, and for each key uses `GETDEL` (atomic read-and-clear) to fetch the delta, then applies `UPDATE songs SET listens = listens + $delta WHERE id = $songId`.
+  - Lock not acquired → log "lock held elsewhere, skipping" and do nothing this tick.
+- Two separate mechanisms doing two separate jobs, deliberately not conflated: the **lock** stops multiple instances from *starting* a flush in the same tick (the real fix for the replica problem); **`GETDEL`** stops a *single* flush from double-applying a key's delta if that instance crashes mid-run (the crash-safety fix from Stage 3/4 discussion). Neither substitutes for the other.
+- No queue, no worker process yet — whichever instance holds the lock does the scan *and* the write itself, so Stage 5's motivation (what breaks when one distinct song is flushed per key, at catalog scale, even with only one instance actually working at a time) is still felt firsthand before the fix is introduced.
 - Search continues to read only from Postgres (confirmed earlier: no read-time merge of Redis + DB — that trade-off was explicitly rejected as unnecessary complexity)
-- **Verify:** hit `/play` several times, confirm Redis counter goes up, wait for the cron interval, confirm Redis resets to 0 and Postgres `listens` reflects the flushed total; search ordering updates only after the flush.
+- **Verify:** start 3 scheduler instances, hit `/play` for a few songs, confirm only one instance's logs show "flushing N keys" per tick while the other two log "lock held elsewhere, skipping"; kill the lock-holding instance mid-flush and confirm a different instance takes over once the lock's TTL expires, without double-applying any delta.
 
 ### Stage 5 — Queue + worker (decouple scan from write)
+- Scheduler stays multi-instance with the same Stage 4 lock (still only one instance scans+enqueues per tick — the lock and the queue solve different problems, and dropping the lock here would just mean N schedulers redundantly re-scanning and racing on `GETDEL` instead of racing on the Postgres write)
 - Add a **queue** (`src/queue.ts`, BullMQ) and change the scheduler from Stage 4 so it only *enqueues* a job per song (`{ songId, delta }`) instead of writing to Postgres itself
 - Add a **worker process** (`src/worker.ts`, BullMQ worker) that consumes jobs off the queue and applies the same `UPDATE songs SET listens = listens + $delta WHERE id = $songId`, then clears the flushed Redis key
 - Runs as a separate `docker-compose` service/process from both the scheduler and the API
