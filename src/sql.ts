@@ -16,6 +16,10 @@ export const songSql = {
                   FROM songs
                   WHERE album_id = $1
                   ORDER BY id`,
+
+  applyListensDelta: `UPDATE songs
+                       SET listens = listens + $2
+                       WHERE id = $1`,
 };
 
 export const albumSql = {
