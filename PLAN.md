@@ -48,17 +48,24 @@ Each stage is independently runnable via `docker compose up` + a documented `cur
 - Postgres `listens` field is now stale by design at this stage (not yet reconciled) — that's expected and sets up Stage 4
 - **Verify:** hit `/play`, confirm Redis counter increments (`redis-cli GET song:listens:<id>` or the debug endpoint) while Postgres stays flat.
 
-### Stage 4 — Cron aggregation → queue → worker (full pipeline)
+### Stage 4 — Cron aggregation, direct write (no queue yet)
 - Add a **scheduler process** (`src/scheduler.ts`, `node-cron`) running on a short interval for learning purposes (e.g. every 30s instead of the video's 12h) that:
   1. Scans Redis for `song:listens:*` keys
-  2. Enqueues a BullMQ job per song with `{ songId, delta }`
+  2. For each key, directly applies `UPDATE songs SET listens = listens + $delta WHERE id = $songId`
   3. Deletes/resets the flushed Redis keys
-- Add a **worker process** (`src/worker.ts`, BullMQ worker) that consumes jobs and applies `UPDATE songs SET listens = listens + $delta WHERE id = $songId`
-- Both run as separate `docker-compose` services (or separate `npm run` processes) from the API — this is the point: decoupling the hot read/write path from the popularity bookkeeping
+- Runs as its own `docker-compose` service (or separate `npm run` process) from the API — this alone already decouples the hot `/play` write path from the Postgres write, which is the main thing Stage 3 left unfinished
+- No queue, no worker process yet — the cron does the scan *and* the write itself, on purpose, so the next stage's motivation (what breaks when one distinct song is flushed per key, at catalog scale) is felt firsthand before the fix is introduced
 - Search continues to read only from Postgres (confirmed earlier: no read-time merge of Redis + DB — that trade-off was explicitly rejected as unnecessary complexity)
 - **Verify:** hit `/play` several times, confirm Redis counter goes up, wait for the cron interval, confirm Redis resets to 0 and Postgres `listens` reflects the flushed total; search ordering updates only after the flush.
 
-### Stage 5 — Optional stretch (only if the earlier stages felt easy)
+### Stage 5 — Queue + worker (decouple scan from write)
+- Add a **queue** (`src/queue.ts`, BullMQ) and change the scheduler from Stage 4 so it only *enqueues* a job per song (`{ songId, delta }`) instead of writing to Postgres itself
+- Add a **worker process** (`src/worker.ts`, BullMQ worker) that consumes jobs off the queue and applies the same `UPDATE songs SET listens = listens + $delta WHERE id = $songId`, then clears the flushed Redis key
+- Runs as a separate `docker-compose` service/process from both the scheduler and the API
+- Purpose: isolate what a queue actually buys you once Stage 4 makes it concrete — the scan (`Job A`) stays fast and constant regardless of catalog size, while the writes (`Job B`) can be processed by one or more workers independently, so a slow/backed-up Postgres no longer risks the scheduler's next tick overlapping with the previous flush still in progress
+- **Verify:** hit `/play` for several songs, confirm jobs land on the queue (BullMQ dashboard/CLI or a debug endpoint), confirm the worker drains them and Postgres/Redis end up in the same state Stage 4 produced — same end result, different mechanism.
+
+### Stage 6 — Optional stretch (only if the earlier stages felt easy)
 Flagged explicitly as optional/lower-value for a solo learning repo — not built unless requested later:
 - Follow/unfollow: composite-key join table `user_follows_artist` + `POST/DELETE /api/follow/:artistId` — cheap to add, isolated from the popularity pipeline
 - Pagination (`limit`/`offset`) on `/api/search`
@@ -86,9 +93,10 @@ learning_spotify_design/
       songs.ts
       albums.ts
     redis.ts                     (Stage 3, ioredis client)
-    scheduler.ts                 (Stage 4, node-cron flush job)
-    worker.ts                    (Stage 4, BullMQ worker)
-    queue.ts                     (Stage 4, BullMQ queue setup)
+    scheduler.ts                 (Stage 4, node-cron flush job; rewritten in
+                                   Stage 5 to enqueue instead of writing directly)
+    queue.ts                     (Stage 5, BullMQ queue setup)
+    worker.ts                    (Stage 5, BullMQ worker)
 ```
 
 ## Verification Approach
