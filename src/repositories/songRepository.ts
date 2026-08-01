@@ -33,14 +33,6 @@ export const songRepository = {
     return rows;
   },
 
-  async incrementListens(id: number): Promise<number | null> {
-    const { rows } = await pool.query<{ listens: number }>(
-      `UPDATE songs SET listens = listens + 1 WHERE id = $1 RETURNING listens`,
-      [id],
-    );
-    return rows[0]?.listens ?? null;
-  },
-
   async findById(id: number): Promise<SongDetail | null> {
     const { rows } = await pool.query<SongDetail>(
       `SELECT s.id, s.title, s.object_ref, s.album_id, a.title AS album_title

@@ -16,7 +16,7 @@ Backend only, no frontend. The goal is to actually run each component and see ho
 
 - [x] **Stage 1** — Postgres schema (`users`, `artists`, `albums`, `songs`) + read API (`/api/search`, `/api/album/:id/songs`, `/api/song/:id`)
 - [x] **Stage 2** — naive popularity counter, written directly to Postgres (`POST /api/song/:id/play`, search ordered by `listens DESC`)
-- [ ] **Stage 3** — Redis as a write buffer for listens
+- [x] **Stage 3** — Redis as a write buffer for listens (`POST /api/song/:id/play`, `GET /api/debug/redis-listens/:id`)
 - [ ] **Stage 4** — cron flush → queue → worker pipeline reconciling Redis into Postgres
 - [ ] **Stage 5** — optional stretch (follow/unfollow, pagination, sharding simulation, mock CDN/streaming)
 
@@ -25,7 +25,7 @@ Backend only, no frontend. The goal is to actually run each component and see ho
 ```bash
 npm install
 cp .env.example .env
-docker compose up -d      # starts Postgres
+docker compose up -d      # starts Postgres and Redis
 npm run migrate           # applies db/migrations/*.sql
 npm run seed               # loads sample artists/albums/songs
 npm run dev                 # starts the API on http://localhost:3000
@@ -38,6 +38,7 @@ curl "http://localhost:3000/api/search?q=fred"
 curl "http://localhost:3000/api/album/1/songs"
 curl "http://localhost:3000/api/song/1"
 curl -X POST "http://localhost:3000/api/song/1/play"
+curl "http://localhost:3000/api/debug/redis-listens/1"
 
 npm run simulate   # emulate concurrent users generating plays, see automation/simulate-plays.ts
 ```
@@ -47,6 +48,7 @@ npm run simulate   # emulate concurrent users generating plays, see automation/s
 ```
 db/migrations/                hand-written SQL migrations, applied in filename order
 src/db.ts                     pg connection pool
+src/redis.ts                  ioredis client (write buffer for listens, Stage 3+)
 src/migrate.ts                tiny migration runner (tracks applied files in schema_migrations)
 src/seed.ts                   sample data loader
 src/repositories/             DB access layer

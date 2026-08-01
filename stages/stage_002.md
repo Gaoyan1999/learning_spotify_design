@@ -10,13 +10,20 @@ traffic against it.
 
 ```bash
 cd ~/workspace/learning/learning_spotify_design
-docker compose up -d        # make sure Postgres is running
-npm run migrate             # applies 002_add_listens.sql on top of 001_init.sql
+docker compose down -v      # fresh container — Stage 2 is a new experiment,
+                            # not a continuation of Stage 1's data
+docker compose up -d        # start Postgres from a clean volume
+docker compose ps           # should say "Up ... (healthy)"
+npm run migrate             # applies 001_init.sql then 002_add_listens.sql,
+                            # in order, on the new volume
+npm run seed                # fresh container has no data — reload sample
+                            # artists/albums/songs
 ```
 
-Expected output: `applying: 002_add_listens.sql` then `migrations up to date`.
-Run it a second time to confirm idempotency — should print
-`skip (already applied): 002_add_listens.sql` for both files.
+Expected `migrate` output: `applying: 001_init.sql`, `applying:
+002_add_listens.sql`, then `migrations up to date`. Run it a second time to
+confirm idempotency — should print `skip (already applied): ...` for both
+files.
 
 ## 2. Observe the schema change
 
