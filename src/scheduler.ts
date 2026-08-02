@@ -2,12 +2,12 @@ import "dotenv/config";
 import cron from "node-cron";
 import { redis } from "./redis.js";
 import { listensBuffer } from "./repositories/listensBuffer.js";
-import { songRepository } from "./repositories/songRepository.js";
+import { listensQueue } from "./queue.js";
 import { createRedisRunCoordinator } from "./redisRunCoordinator.js";
 
 async function flushListens(): Promise<void> {
   const songIds = await listensBuffer.listBufferedSongIds();
-  let flushed = 0;
+  let enqueued = 0;
 
   for (const songId of songIds) {
     const delta = await listensBuffer.take(songId);
@@ -15,11 +15,18 @@ async function flushListens(): Promise<void> {
     // tick already claimed this key via take()'s GETDEL.
     if (delta <= 0) continue;
 
-    await songRepository.applyListensDelta(songId, delta);
-    flushed++;
+    // The Redis side is already done (take() cleared it) — enqueueing is
+    // the only thing left here. The actual Postgres write happens in
+    // src/worker.ts, not in this process.
+    await listensQueue.add(
+      "flush",
+      { songId, delta },
+      { attempts: 3, backoff: { type: "exponential", delay: 1000 } },
+    );
+    enqueued++;
   }
 
-  console.log(`[scheduler] flushed ${flushed}/${songIds.length} song(s)`);
+  console.log(`[scheduler] enqueued ${enqueued}/${songIds.length} song(s)`);
 }
 
 cron.schedule(
@@ -34,4 +41,4 @@ cron.schedule(
   },
 );
 
-console.log("[scheduler] started — flushing song:listens:* every 30s");
+console.log("[scheduler] started — enqueuing song:listens:* flushes every 30s");
